@@ -1,0 +1,14 @@
+.DS_Store
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# node
+node_modules/
+
+# data
+raw_data/
+*.csv
+*.json
