@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import json
+import pickle
 from pathlib import Path
 from typing import Dict, Iterable, Tuple
 
@@ -81,6 +83,13 @@ def _get_env_folder_url(namespace: str) -> str | None:
 
 
 def _download_from_gdrive(url: str, target: Path) -> Tuple[bool, str]:
+    if "drive.google.com/drive/folders/" in url:
+        return False, (
+            "파일 URL 자리에 폴더 링크가 입력되었습니다. "
+            "파일별 키에는 file 링크를 넣거나, "
+            "[gdrive_urls.<namespace>] folder_url 키를 사용하세요."
+        )
+
     try:
         import gdown  # type: ignore
     except Exception:
@@ -140,11 +149,59 @@ def _is_valid_parquet(path: Path) -> bool:
         return False
 
 
+def _looks_like_html(path: Path) -> bool:
+    try:
+        if not path.exists() or path.stat().st_size == 0:
+            return False
+        with path.open("rb") as f:
+            head = f.read(1024).lower()
+        return (
+            b"<!doctype html" in head
+            or b"<html" in head
+            or b"<head" in head
+            or b"<body" in head
+        )
+    except Exception:
+        return False
+
+
+def _is_valid_json(path: Path) -> bool:
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            json.load(f)
+        return True
+    except Exception:
+        return False
+
+
+def _is_valid_pickle_like(path: Path) -> bool:
+    # .pkl / .joblib 공통 검증: HTML 잘못 저장 방지 + 최소 로드 테스트
+    try:
+        if _looks_like_html(path):
+            return False
+        with path.open("rb") as f:
+            _ = pickle.load(f)
+        return True
+    except Exception:
+        try:
+            import joblib  # type: ignore
+            _ = joblib.load(path)
+            return True
+        except Exception:
+            return False
+
+
 def _is_usable_file(path: Path) -> bool:
     if not path.exists() or path.stat().st_size == 0:
         return False
+    if _looks_like_html(path):
+        return False
     if path.suffix.lower() == ".parquet":
         return _is_valid_parquet(path)
+    if path.suffix.lower() == ".json":
+        return _is_valid_json(path)
+    if path.suffix.lower() in {".pkl", ".joblib"}:
+        return _is_valid_pickle_like(path)
     return True
 
 

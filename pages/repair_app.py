@@ -3,6 +3,7 @@ import pandas as pd
 import joblib, json
 import numpy as np
 import io
+import pickle
 from pathlib import Path
 from data_bootstrap import ensure_page_files
 
@@ -213,12 +214,48 @@ def build_snapshot_daily(rental_daily, BR, snapshot_date, window_days=30):
 
 @st.cache_resource
 def load_model():
-    model = joblib.load(base / "xgb_model.pkl")
-    with open(base / "features.json", "r", encoding="utf-8") as f:
-        features = json.load(f)
-    return model, features
+    model_path = base / "xgb_model.pkl"
+    model_json_path = base / "xgb_model.json"
+    features_path = base / "features.json"
 
-model, features = load_model()
+    with open(features_path, "r", encoding="utf-8") as f:
+        features = json.load(f)
+
+    # 1) 기본: joblib 로딩
+    try:
+        model = joblib.load(model_path)
+        return model, features, "sklearn"
+    except Exception as e_joblib:
+        # 2) pickle fallback
+        try:
+            with open(model_path, "rb") as f:
+                model = pickle.load(f)
+            return model, features, "sklearn"
+        except Exception:
+            # 3) xgboost json fallback
+            try:
+                import xgboost as xgb
+                if model_json_path.exists():
+                    booster = xgb.Booster()
+                    booster.load_model(str(model_json_path))
+                    return booster, features, "booster"
+            except Exception:
+                pass
+            raise RuntimeError(
+                "모델 로드 실패: xgb_model.pkl 언피클 실패. "
+                "구글드라이브 파일 손상/링크 권한 또는 Python/XGBoost 버전 불일치 가능성이 큽니다. "
+                f"(joblib 에러: {e_joblib})"
+            )
+
+try:
+    model, features, model_kind = load_model()
+except Exception as e:
+    st.error(str(e))
+    st.info(
+        "해결 방법: 1) 해당 파일 공유권한(링크 사용자 보기) 확인 2) Secrets의 repair 링크 재확인 "
+        "3) 가능하면 xgb_model.json도 함께 업로드해 fallback 사용"
+    )
+    st.stop()
 rental_daily, BR = load_raw_data()
 
 # ══════════════════════════════════════════════
@@ -284,7 +321,12 @@ if data_filtered.empty:
     st.stop()
 
 X = data_filtered.reindex(columns=features, fill_value=0)
-data_filtered["고장확률"]     = model.predict_proba(X)[:, 1]
+if model_kind == "booster":
+    import xgboost as xgb
+    pred = model.predict(xgb.DMatrix(X))
+    data_filtered["고장확률"] = np.asarray(pred, dtype=float)
+else:
+    data_filtered["고장확률"] = model.predict_proba(X)[:, 1]
 data_filtered["고장확률_pct"] = (data_filtered["고장확률"] * 100).round(1)
 
 def 권고사항(p):
