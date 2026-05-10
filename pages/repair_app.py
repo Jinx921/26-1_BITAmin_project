@@ -4,6 +4,7 @@ import joblib, json
 import numpy as np
 import io
 from pathlib import Path
+from data_bootstrap import ensure_page_files
 
 st.set_page_config(
     page_title="서울시 따릉이 고장 예측",
@@ -139,9 +140,16 @@ div[data-testid="stHorizontalBlock"] { gap: 14px !important; }
 # ══════════════════════════════════════════════
 project_root = Path(__file__).resolve().parent.parent
 base = project_root / "processed_data" / "heeseo"
-if not base.exists():
-    # fallback: 파일이 페이지 파일과 같은 폴더에 있을 때
-    base = Path(__file__).parent
+
+ensure_page_files(
+    namespace="repair",
+    required_files={
+        "rental_daily": base / "rental_daily.pkl",
+        "br": base / "BR.pkl",
+        "xgb_model": base / "xgb_model.pkl",
+        "features_json": base / "features.json",
+    },
+)
 @st.cache_data
 def load_raw_data():
     rental_daily = pd.read_pickle(base / "rental_daily.pkl")

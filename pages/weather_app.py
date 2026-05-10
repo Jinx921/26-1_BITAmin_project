@@ -5,6 +5,7 @@ import pickle
 import holidays
 import plotly.express as px
 from pathlib import Path
+from data_bootstrap import ensure_page_files
 
 st.set_page_config(
     page_title="따릉이 고장 예측 시스템",
@@ -14,6 +15,14 @@ st.set_page_config(
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 YEWON_DIR = PROJECT_ROOT / "processed_data" / "yewon"
+
+ensure_page_files(
+    namespace="weather",
+    required_files={
+        "model": YEWON_DIR / "model.pkl",
+        "weather_csv": YEWON_DIR / "2026기상청날씨데이터.csv",
+    },
+)
 
 st.markdown(
     """

@@ -13,3 +13,4 @@ streamlit-folium>=0.20
 plotly>=5.22
 holidays>=0.52
 openpyxl>=3.1
+gdown>=5.2

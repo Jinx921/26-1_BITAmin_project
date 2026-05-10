@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 import folium
 from folium.plugins import MarkerCluster, HeatMap
+from data_bootstrap import ensure_page_files
 
 try:
     from streamlit_folium import st_folium
@@ -92,7 +93,18 @@ st.markdown(
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-PROCESSED_DIR = PROJECT_ROOT / "processed_data" / "hyejin"
+PROCESSED_DIR = PROJECT_ROOT / "processed_data"
+
+ensure_page_files(
+    namespace="hotspot",
+    required_files={
+        "hotspot_map": PROCESSED_DIR / "station_hotspot_map.parquet",
+        "station_daily": PROCESSED_DIR / "station_hotspot_daily.parquet",
+        "repair_events": PROCESSED_DIR / "repair_station_events.parquet",
+        "cluster_model": PROCESSED_DIR / "model.pkl",
+        "forecast_model": PROCESSED_DIR / "forecast_model.pkl",
+    },
+)
 
 GRADE_MAP = {"HIGH": "위험", "MID": "주의", "LOW": "보통"}
 GRADE_ORDER = ["위험", "주의", "보통"]
