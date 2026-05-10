@@ -205,7 +205,11 @@ def _is_usable_file(path: Path) -> bool:
     return True
 
 
-def ensure_page_files(namespace: str, required_files: Dict[str, Path]) -> Dict[str, Path]:
+def ensure_page_files(
+    namespace: str,
+    required_files: Dict[str, Path],
+    optional_files: Dict[str, Path] | None = None,
+) -> Dict[str, Path]:
     """
     namespace 예시: hotspot / repair / weather
     required_files: {"logical_key": Path(...)}
@@ -216,6 +220,7 @@ def ensure_page_files(namespace: str, required_files: Dict[str, Path]) -> Dict[s
     3) st.secrets[gdrive_urls]["<namespace>_<key>"]
     """
     missing: list[Tuple[str, Path]] = []
+    optional_files = optional_files or {}
 
     for key, path in required_files.items():
         if _is_usable_file(path):
@@ -227,6 +232,26 @@ def ensure_page_files(namespace: str, required_files: Dict[str, Path]) -> Dict[s
             continue
 
         # 깨진 파일은 삭제 후 재다운로드
+        if path.exists():
+            try:
+                path.unlink()
+            except Exception:
+                pass
+
+        ok, msg = _download_from_gdrive(url, path)
+        if not ok or not _is_usable_file(path):
+            st.error(f"[{namespace}] `{key}` 다운로드 실패: {msg}")
+            st.stop()
+
+    # optional 파일: URL이 있으면 내려받고, 없으면 건너뜀
+    for key, path in optional_files.items():
+        if _is_usable_file(path):
+            continue
+
+        url = _get_env_url(namespace, key) or _get_secret_url(namespace, key)
+        if not url:
+            continue
+
         if path.exists():
             try:
                 path.unlink()
