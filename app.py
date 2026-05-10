@@ -14,7 +14,7 @@ except Exception:
 
 
 st.set_page_config(
-    page_title="서울 따릉이 고장 핫스팟/예측 대시보드",
+    page_title="서울시 따릉이 고장 핫스팟 및 예측 대시보드",
     page_icon="🚲",
     layout="wide",
 )
