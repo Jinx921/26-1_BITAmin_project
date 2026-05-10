@@ -89,8 +89,12 @@ def _download_from_gdrive(url: str, target: Path) -> Tuple[bool, str]:
     target.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        # fuzzy=True: 다양한 구글드라이브 URL 형식 자동 처리
-        out = gdown.download(url=url, output=str(target), quiet=True, fuzzy=True)
+        # 신버전 gdown: fuzzy 지원
+        try:
+            out = gdown.download(url=url, output=str(target), quiet=True, fuzzy=True)
+        except TypeError:
+            # 구버전 gdown: fuzzy 미지원
+            out = gdown.download(url=url, output=str(target), quiet=True)
         if out is None:
             return False, "다운로드 실패(None 반환)"
         if not target.exists() or target.stat().st_size == 0:
