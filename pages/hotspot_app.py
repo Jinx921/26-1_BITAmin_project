@@ -135,6 +135,24 @@ def risk_to_ko(series: pd.Series) -> pd.Series:
 @st.cache_data(show_spinner=False)
 def read_any(path: Path):
     if path.suffix.lower() == ".parquet":
+        # 배포 환경(pyarrow/pandas 버전 차이)에서 timestamp 컬럼 파싱 오류를 피하기 위해
+        # 파일별로 필요한 최소 컬럼만 우선 로드
+        p = path.name.lower()
+        if p == "station_hotspot_map.parquet":
+            try:
+                return pd.read_parquet(path, columns=["추정고장대여소ID", "위도", "경도", "고장건수"])
+            except Exception:
+                pass
+        if p == "repair_station_events.parquet":
+            try:
+                return pd.read_parquet(path, columns=["추정고장대여소ID", "고장구분"])
+            except Exception:
+                pass
+        if p == "station_hotspot_daily.parquet":
+            try:
+                return pd.read_parquet(path, columns=["date", "추정고장대여소ID", "고장건수"])
+            except Exception:
+                pass
         return pd.read_parquet(path)
     return pd.read_csv(path)
 

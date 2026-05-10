@@ -121,6 +121,33 @@ def _download_folder_from_gdrive(url: str, output_dir: Path) -> Tuple[bool, str]
         return False, str(e)
 
 
+def _is_valid_parquet(path: Path) -> bool:
+    try:
+        if not path.exists() or path.stat().st_size < 12:
+            return False
+        with path.open("rb") as f:
+            head = f.read(4)
+            f.seek(-4, 2)
+            tail = f.read(4)
+        if not (head == b"PAR1" and tail == b"PAR1"):
+            return False
+
+        # 실제 parquet 메타데이터까지 확인
+        import pyarrow.parquet as pq  # type: ignore
+        _ = pq.read_schema(path)
+        return True
+    except Exception:
+        return False
+
+
+def _is_usable_file(path: Path) -> bool:
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    if path.suffix.lower() == ".parquet":
+        return _is_valid_parquet(path)
+    return True
+
+
 def ensure_page_files(namespace: str, required_files: Dict[str, Path]) -> Dict[str, Path]:
     """
     namespace 예시: hotspot / repair / weather
@@ -134,7 +161,7 @@ def ensure_page_files(namespace: str, required_files: Dict[str, Path]) -> Dict[s
     missing: list[Tuple[str, Path]] = []
 
     for key, path in required_files.items():
-        if path.exists():
+        if _is_usable_file(path):
             continue
 
         url = _get_env_url(namespace, key) or _get_secret_url(namespace, key)
@@ -142,8 +169,15 @@ def ensure_page_files(namespace: str, required_files: Dict[str, Path]) -> Dict[s
             missing.append((key, path))
             continue
 
+        # 깨진 파일은 삭제 후 재다운로드
+        if path.exists():
+            try:
+                path.unlink()
+            except Exception:
+                pass
+
         ok, msg = _download_from_gdrive(url, path)
-        if not ok:
+        if not ok or not _is_usable_file(path):
             st.error(f"[{namespace}] `{key}` 다운로드 실패: {msg}")
             st.stop()
 
@@ -165,7 +199,7 @@ def ensure_page_files(namespace: str, required_files: Dict[str, Path]) -> Dict[s
                 st.stop()
 
     # Re-check
-    not_ready = [(k, p) for k, p in required_files.items() if not p.exists()]
+    not_ready = [(k, p) for k, p in required_files.items() if not _is_usable_file(p)]
     if not_ready:
         lines = [f"- {k}: `{p}`" for k, p in not_ready]
         st.error(
