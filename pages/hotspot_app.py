@@ -92,7 +92,7 @@ st.markdown(
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-PROCESSED_DIR = PROJECT_ROOT / "processed_data"
+PROCESSED_DIR = PROJECT_ROOT / "processed_data" / "hyejin"
 
 GRADE_MAP = {"HIGH": "위험", "MID": "주의", "LOW": "보통"}
 GRADE_ORDER = ["위험", "주의", "보통"]
