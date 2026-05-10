@@ -43,6 +43,43 @@ def _get_env_url(namespace: str, key: str) -> str | None:
     return v.strip() if isinstance(v, str) and v.strip() else None
 
 
+def _get_secret_folder_url(namespace: str) -> str | None:
+    try:
+        g = st.secrets.get("gdrive_urls", {})
+    except Exception:
+        return None
+
+    g = _to_dict(g)
+    ns = _to_dict(g.get(namespace, {}))
+
+    # 1) [gdrive_urls.<namespace>] folder_url = "..."
+    if "folder_url" in ns and str(ns["folder_url"]).strip():
+        return str(ns["folder_url"]).strip()
+
+    # 2) [gdrive_urls] folder_url = "..."
+    if "folder_url" in g and str(g["folder_url"]).strip():
+        return str(g["folder_url"]).strip()
+
+    # 3) [gdrive_urls] <namespace>_folder_url = "..."
+    flat_key = f"{namespace}_folder_url"
+    if flat_key in g and str(g[flat_key]).strip():
+        return str(g[flat_key]).strip()
+
+    return None
+
+
+def _get_env_folder_url(namespace: str) -> str | None:
+    keys = [
+        f"GDRIVE_{namespace.upper()}_FOLDER_URL",
+        "GDRIVE_FOLDER_URL",
+    ]
+    for k in keys:
+        v = os.getenv(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
 def _download_from_gdrive(url: str, target: Path) -> Tuple[bool, str]:
     try:
         import gdown  # type: ignore
@@ -58,6 +95,23 @@ def _download_from_gdrive(url: str, target: Path) -> Tuple[bool, str]:
             return False, "다운로드 실패(None 반환)"
         if not target.exists() or target.stat().st_size == 0:
             return False, "다운로드 후 파일이 비어있거나 생성되지 않았습니다."
+        return True, "ok"
+    except Exception as e:  # pragma: no cover
+        return False, str(e)
+
+
+def _download_folder_from_gdrive(url: str, output_dir: Path) -> Tuple[bool, str]:
+    try:
+        import gdown  # type: ignore
+    except Exception:
+        return False, "gdown 패키지가 필요합니다. `pip install gdown`"
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        files = gdown.download_folder(url=url, output=str(output_dir), quiet=True)
+        if files is None:
+            return False, "폴더 다운로드 실패(None 반환)"
         return True, "ok"
     except Exception as e:  # pragma: no cover
         return False, str(e)
@@ -89,6 +143,23 @@ def ensure_page_files(namespace: str, required_files: Dict[str, Path]) -> Dict[s
             st.error(f"[{namespace}] `{key}` 다운로드 실패: {msg}")
             st.stop()
 
+    # per-file URL이 없으면, folder_url로 한 번에 내려받기 시도
+    if missing:
+        folder_url = _get_env_folder_url(namespace) or _get_secret_folder_url(namespace)
+        if folder_url:
+            # required_files가 /.../processed_data/... 라고 가정하고
+            # 상위 프로젝트 루트에 폴더를 풀어서 구조를 살립니다.
+            sample_path = next(iter(required_files.values()))
+            processed_dir = sample_path
+            while processed_dir.name != "processed_data" and processed_dir.parent != processed_dir:
+                processed_dir = processed_dir.parent
+            output_root = processed_dir.parent if processed_dir.name == "processed_data" else sample_path.parent
+
+            ok, msg = _download_folder_from_gdrive(folder_url, output_root)
+            if not ok:
+                st.error(f"[{namespace}] folder_url 다운로드 실패: {msg}")
+                st.stop()
+
     # Re-check
     not_ready = [(k, p) for k, p in required_files.items() if not p.exists()]
     if not_ready:
@@ -97,7 +168,9 @@ def ensure_page_files(namespace: str, required_files: Dict[str, Path]) -> Dict[s
             "필수 파일이 없습니다. 구글드라이브 URL을 설정해 주세요.\n\n"
             "설정 키 형식:\n"
             f"- 환경변수: `GDRIVE_{namespace.upper()}_<KEY>_URL`\n"
+            f"- 환경변수(폴더): `GDRIVE_{namespace.upper()}_FOLDER_URL` 또는 `GDRIVE_FOLDER_URL`\n"
             f"- secrets: `[gdrive_urls.{namespace}] <key> = \"...\"`\n\n"
+            f"- secrets(폴더): `[gdrive_urls.{namespace}] folder_url = \"...\"` 또는 `[gdrive_urls] folder_url = \"...\"`\n\n"
             "누락 파일:\n" + "\n".join(lines)
         )
         st.stop()

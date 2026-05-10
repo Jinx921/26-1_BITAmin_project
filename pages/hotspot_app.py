@@ -93,7 +93,7 @@ st.markdown(
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-PROCESSED_DIR = PROJECT_ROOT / "processed_data"
+PROCESSED_DIR = PROJECT_ROOT / "processed_data" / "hyejin"
 
 ensure_page_files(
     namespace="hotspot",
