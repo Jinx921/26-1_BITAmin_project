@@ -80,9 +80,7 @@ def read_any(path: Path):
 def load_input_files(processed_dir: Path):
     hotspot_path = pick_existing([
         processed_dir / "station_hotspot_map.parquet",
-        processed_dir / "station_hotspot_with_coords.parquet",
         processed_dir / "clustered_hotspot.parquet",
-        processed_dir / "clustered_hotspot.csv",
     ])
     daily_path = pick_existing([
         processed_dir / "station_hotspot_daily.parquet",
