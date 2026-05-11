@@ -145,15 +145,35 @@ base = project_root / "processed_data" / "heeseo"
 ensure_page_files(
     namespace="repair",
     required_files={
-        "rental_daily": base / "rental_daily.pkl",
         "br": base / "BR.pkl",
         "xgb_model": base / "xgb_model.pkl",
         "features_json": base / "features.json",
     },
+    optional_files={
+        "rental_daily_compact": base / "rental_daily.parquet",
+        "rental_daily": base / "rental_daily.pkl",
+        "xgb_model_json": base / "xgb_model.json",
+    },
 )
-@st.cache_data
+
+@st.cache_resource
 def load_raw_data():
-    rental_daily = pd.read_pickle(base / "rental_daily.pkl")
+    compact_path = base / "rental_daily_compact.parquet"
+    legacy_path = base / "rental_daily.pkl"
+
+    if compact_path.exists():
+        rental_daily = pd.read_parquet(compact_path)
+    elif legacy_path.exists():
+        rental_daily = pd.read_pickle(legacy_path)
+    else:
+        raise FileNotFoundError("`rental_daily_compact.parquet` 또는 `rental_daily.pkl` 파일이 필요합니다.")
+
+    need_cols = ["자전거번호", "date", "일일이용거리", "일일대여횟수"]
+    missing_cols = [c for c in need_cols if c not in rental_daily.columns]
+    if missing_cols:
+        raise KeyError(f"rental_daily 필수 컬럼 누락: {missing_cols}")
+    rental_daily = rental_daily[need_cols].copy()
+
     BR = pd.read_pickle(base / "BR.pkl")
     rental_daily["date"] = pd.to_datetime(rental_daily["date"])
     BR["date"] = pd.to_datetime(BR["date"])
