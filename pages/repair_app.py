@@ -144,47 +144,134 @@ base = project_root / "processed_data" / "heeseo"
 ensure_page_files(
     namespace="repair",
     required_files={
-        "rental_daily": base / "rental_daily.pkl",
+        "rental_daily_parquet": base / "rental_daily.parquet",
         "br": base / "BR.pkl",
         "xgb_model": base / "xgb_model.pkl",
         "features_json": base / "features.json",
     },
+    optional_files={
+        "rental_daily": base / "rental_daily.pkl",
+    },
 )
 @st.cache_resource
-def load_raw_data():
-    rental_daily = pd.read_pickle(base / "rental_daily.pkl")
-    BR = pd.read_pickle(base / "BR.pkl")
-    # 출력/계산식은 그대로 유지하면서, 필요한 컬럼만 남겨 메모리 피크를 줄임
-    rental_daily = rental_daily[["자전거번호", "date", "일일이용거리", "일일대여횟수"]]
-    BR = BR[["bike", "date", "type"]]
-    rental_daily["date"] = pd.to_datetime(rental_daily["date"])
-    BR["date"] = pd.to_datetime(BR["date"])
-    return rental_daily, BR
+def load_br_data():
+    br = pd.read_pickle(base / "BR.pkl")
+    br = br[["bike", "date", "type"]].copy()
+    br["date"] = pd.to_datetime(br["date"], errors="coerce")
+    br = br.dropna(subset=["bike", "date"])
+    return br
 
-def build_snapshot_daily(rental_daily, BR, snapshot_date, window_days=30):
+
+def _combine_grouped(parts, key_cols, agg_map, empty_cols):
+    if not parts:
+        return pd.DataFrame(columns=empty_cols)
+    merged = pd.concat(parts, ignore_index=True)
+    return merged.groupby(key_cols, as_index=False).agg(agg_map)
+
+
+def _build_rental_agg_from_parquet(snapshot_date):
+    import pyarrow.parquet as pq
+
+    rental_path = base / "rental_daily.parquet"
+    pf = pq.ParquetFile(rental_path)
+
+    start7 = snapshot_date - pd.Timedelta(days=7)
+    start30 = snapshot_date - pd.Timedelta(days=30)
+    start90 = snapshot_date - pd.Timedelta(days=90)
+
+    total_parts, r7_parts, r30_parts, r90_parts = [], [], [], []
+
+    for batch in pf.iter_batches(
+        columns=["자전거번호", "date", "일일이용거리", "일일대여횟수"],
+        batch_size=500_000,
+        use_threads=True,
+    ):
+        chunk = batch.to_pandas()
+        chunk["자전거번호"] = chunk["자전거번호"].astype("string").str.strip()
+        chunk["date"] = pd.to_datetime(chunk["date"], errors="coerce")
+        chunk = chunk.loc[chunk["date"].notna() & (chunk["date"] <= snapshot_date)]
+        if chunk.empty:
+            continue
+
+        chunk["일일이용거리"] = pd.to_numeric(chunk["일일이용거리"], errors="coerce").fillna(0)
+        chunk["일일대여횟수"] = pd.to_numeric(chunk["일일대여횟수"], errors="coerce").fillna(0)
+
+        total_parts.append(
+            chunk.groupby("자전거번호", as_index=False).agg(
+                총이용거리=("일일이용거리", "sum"),
+                총대여횟수=("일일대여횟수", "sum"),
+                마지막대여일=("date", "max"),
+            )
+        )
+
+        c7 = chunk.loc[chunk["date"] > start7]
+        if not c7.empty:
+            r7_parts.append(
+                c7.groupby("자전거번호", as_index=False).agg(
+                    최근7일이용거리=("일일이용거리", "sum"),
+                    최근7일대여횟수=("일일대여횟수", "sum"),
+                )
+            )
+
+        c30 = chunk.loc[chunk["date"] > start30]
+        if not c30.empty:
+            r30_parts.append(
+                c30.groupby("자전거번호", as_index=False).agg(
+                    최근30일이용거리=("일일이용거리", "sum"),
+                    최근30일대여횟수=("일일대여횟수", "sum"),
+                )
+            )
+
+        c90 = chunk.loc[chunk["date"] > start90]
+        if not c90.empty:
+            r90_parts.append(
+                c90.groupby("자전거번호", as_index=False).agg(
+                    최근90일이용거리=("일일이용거리", "sum"),
+                    최근90일대여횟수=("일일대여횟수", "sum"),
+                )
+            )
+
+    rental_agg = _combine_grouped(
+        total_parts,
+        ["자전거번호"],
+        {"총이용거리": "sum", "총대여횟수": "sum", "마지막대여일": "max"},
+        ["자전거번호", "총이용거리", "총대여횟수", "마지막대여일"],
+    )
+    r7 = _combine_grouped(
+        r7_parts,
+        ["자전거번호"],
+        {"최근7일이용거리": "sum", "최근7일대여횟수": "sum"},
+        ["자전거번호", "최근7일이용거리", "최근7일대여횟수"],
+    )
+    r30 = _combine_grouped(
+        r30_parts,
+        ["자전거번호"],
+        {"최근30일이용거리": "sum", "최근30일대여횟수": "sum"},
+        ["자전거번호", "최근30일이용거리", "최근30일대여횟수"],
+    )
+    r90 = _combine_grouped(
+        r90_parts,
+        ["자전거번호"],
+        {"최근90일이용거리": "sum", "최근90일대여횟수": "sum"},
+        ["자전거번호", "최근90일이용거리", "최근90일대여횟수"],
+    )
+    return rental_agg, r7, r30, r90
+
+
+def build_snapshot_daily(BR, snapshot_date, window_days=30):
     snapshot_date = pd.Timestamp(snapshot_date)
     future_end = snapshot_date + pd.Timedelta(days=window_days)
-    rental_past = rental_daily[rental_daily["date"] <= snapshot_date].copy()
-    fault_past  = BR[BR["date"] <= snapshot_date].copy()
-    if rental_past.empty:
+
+    rental_agg, r7, r30, r90 = _build_rental_agg_from_parquet(snapshot_date)
+    if rental_agg.empty:
         return pd.DataFrame()
-    rental_agg = (
-        rental_past.groupby("자전거번호")
-        .agg(총이용거리=("일일이용거리","sum"), 총대여횟수=("일일대여횟수","sum"), 마지막대여일=("date","max"))
-        .reset_index()
-    )
-    def recent_agg(days):
-        start = snapshot_date - pd.Timedelta(days=days)
-        temp  = rental_past[rental_past["date"] > start]
-        return (
-            temp.groupby("자전거번호")
-            .agg(**{f"최근{days}일이용거리":("일일이용거리","sum"), f"최근{days}일대여횟수":("일일대여횟수","sum")})
-            .reset_index()
-        )
-    r7, r30, r90 = recent_agg(7), recent_agg(30), recent_agg(90)
+
+    fault_past = BR.loc[BR["date"] <= snapshot_date]
     if fault_past.empty:
         fault_agg = pd.DataFrame(columns=["자전거번호","총고장횟수","마지막고장일","주요고장유형"])
     else:
+        fault_past = fault_past.copy()
+        fault_past["bike"] = fault_past["bike"].astype("string").str.strip()
         fault_type_mode = (
             fault_past.groupby("bike")["type"]
             .agg(lambda x: x.mode().iat[0] if not x.mode().empty else np.nan)
@@ -196,6 +283,8 @@ def build_snapshot_daily(rental_daily, BR, snapshot_date, window_days=30):
             .reset_index().rename(columns={"bike":"자전거번호"})
             .merge(fault_type_mode, on="자전거번호", how="left")
         )
+    rental_agg["자전거번호"] = rental_agg["자전거번호"].astype("string").str.strip()
+    fault_agg["자전거번호"] = fault_agg["자전거번호"].astype("string").str.strip()
     snap = rental_agg.merge(fault_agg, on="자전거번호", how="left")
     for df in [r7, r30, r90]:
         snap = snap.merge(df, on="자전거번호", how="left")
@@ -222,7 +311,7 @@ def load_model():
     return model, features
 
 model, features = load_model()
-rental_daily, BR = load_raw_data()
+BR = load_br_data()
 
 # ══════════════════════════════════════════════
 #  타이틀
@@ -280,13 +369,17 @@ st.sidebar.markdown("""
 #  예측 실행
 # ══════════════════════════════════════════════
 with st.spinner("Loading ..."):
-    data_filtered = build_snapshot_daily(rental_daily, BR, pd.Timestamp(기준날짜), window_days=30)
+    data_filtered = build_snapshot_daily(BR, pd.Timestamp(기준날짜), window_days=30)
 
 if data_filtered.empty:
     st.error("선택한 날짜 기준으로 생성된 데이터가 없습니다.")
     st.stop()
 
 X = data_filtered.reindex(columns=features, fill_value=0)
+# 배치 집계 경로에서 일부 컬럼이 object로 남을 수 있어 모델 입력 직전에 숫자형으로 강제 통일
+for col in X.columns:
+    X[col] = pd.to_numeric(X[col], errors="coerce")
+X = X.replace([np.inf, -np.inf], np.nan).fillna(0)
 data_filtered["고장확률"]     = model.predict_proba(X)[:, 1]
 data_filtered["고장확률_pct"] = (data_filtered["고장확률"] * 100).round(1)
 
