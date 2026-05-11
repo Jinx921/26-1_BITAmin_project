@@ -673,7 +673,7 @@ with tab_pred:
           <div class="section-icon section-icon-violet">🔮</div>
           <div>
             <div class="section-title">미래 예측 핫스팟 지도</div>
-            <div class="section-desc">선택한 날짜에 고장이 집중될 가능성이 높은 대여소를 표시합니다</div>
+            <div class="section-desc">선택한 날짜에 고장이 집중될 가능성이 높은 대여소를 표시합니다.</div>
           </div>
         </div>
         """,
