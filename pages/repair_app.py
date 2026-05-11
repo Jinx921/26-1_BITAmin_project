@@ -150,10 +150,13 @@ ensure_page_files(
         "features_json": base / "features.json",
     },
 )
-@st.cache_data
+@st.cache_resource
 def load_raw_data():
     rental_daily = pd.read_pickle(base / "rental_daily.pkl")
     BR = pd.read_pickle(base / "BR.pkl")
+    # 출력/계산식은 그대로 유지하면서, 필요한 컬럼만 남겨 메모리 피크를 줄임
+    rental_daily = rental_daily[["자전거번호", "date", "일일이용거리", "일일대여횟수"]]
+    BR = BR[["bike", "date", "type"]]
     rental_daily["date"] = pd.to_datetime(rental_daily["date"])
     BR["date"] = pd.to_datetime(BR["date"])
     return rental_daily, BR
