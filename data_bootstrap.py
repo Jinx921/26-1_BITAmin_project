@@ -175,20 +175,20 @@ def _is_valid_json(path: Path) -> bool:
 
 
 def _is_valid_pickle_like(path: Path) -> bool:
-    # .pkl / .joblib 공통 검증: HTML 잘못 저장 방지 + 최소 로드 테스트
+    # .pkl / .joblib 공통 검증: HTML 잘못 저장 방지 + 경량 헤더 체크
+    # 주의: 대용량 pickle을 실제로 load하면 배포 메모리 급증으로 프로세스가 죽을 수 있음.
     try:
         if _looks_like_html(path):
             return False
-        with path.open("rb") as f:
-            _ = pickle.load(f)
-        return True
-    except Exception:
-        try:
-            import joblib  # type: ignore
-            _ = joblib.load(path)
-            return True
-        except Exception:
+        if not path.exists() or path.stat().st_size < 2:
             return False
+        with path.open("rb") as f:
+            head = f.read(2)
+        # 일반 pickle 프로토콜 시작 바이트(0x80) 기준 경량 판별
+        # joblib도 pickle 기반이므로 대부분 동일하게 통과.
+        return head[:1] == b"\x80"
+    except Exception:
+        return False
 
 
 def _is_usable_file(path: Path) -> bool:
