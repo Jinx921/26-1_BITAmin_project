@@ -3,7 +3,6 @@ import pandas as pd
 import joblib, json
 import numpy as np
 import io
-import pickle
 from pathlib import Path
 from data_bootstrap import ensure_page_files
 
@@ -137,7 +136,7 @@ div[data-testid="stHorizontalBlock"] { gap: 14px !important; }
 """, unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════
-#  데이터 / 모델 (경로만 프로젝트 구조에 맞게 조정)
+#  데이터 / 모델
 # ══════════════════════════════════════════════
 project_root = Path(__file__).resolve().parent.parent
 base = project_root / "processed_data" / "heeseo"
@@ -145,35 +144,15 @@ base = project_root / "processed_data" / "heeseo"
 ensure_page_files(
     namespace="repair",
     required_files={
+        "rental_daily": base / "rental_daily.pkl",
         "br": base / "BR.pkl",
         "xgb_model": base / "xgb_model.pkl",
         "features_json": base / "features.json",
     },
-    optional_files={
-        "rental_daily_compact": base / "rental_daily.parquet",
-        "rental_daily": base / "rental_daily.pkl",
-        "xgb_model_json": base / "xgb_model.json",
-    },
 )
-
-@st.cache_resource
+@st.cache_data
 def load_raw_data():
-    compact_path = base / "rental_daily_compact.parquet"
-    legacy_path = base / "rental_daily.pkl"
-
-    if compact_path.exists():
-        rental_daily = pd.read_parquet(compact_path)
-    elif legacy_path.exists():
-        rental_daily = pd.read_pickle(legacy_path)
-    else:
-        raise FileNotFoundError("`rental_daily_compact.parquet` 또는 `rental_daily.pkl` 파일이 필요합니다.")
-
-    need_cols = ["자전거번호", "date", "일일이용거리", "일일대여횟수"]
-    missing_cols = [c for c in need_cols if c not in rental_daily.columns]
-    if missing_cols:
-        raise KeyError(f"rental_daily 필수 컬럼 누락: {missing_cols}")
-    rental_daily = rental_daily[need_cols].copy()
-
+    rental_daily = pd.read_pickle(base / "rental_daily.pkl")
     BR = pd.read_pickle(base / "BR.pkl")
     rental_daily["date"] = pd.to_datetime(rental_daily["date"])
     BR["date"] = pd.to_datetime(BR["date"])
@@ -234,48 +213,12 @@ def build_snapshot_daily(rental_daily, BR, snapshot_date, window_days=30):
 
 @st.cache_resource
 def load_model():
-    model_path = base / "xgb_model.pkl"
-    model_json_path = base / "xgb_model.json"
-    features_path = base / "features.json"
-
-    with open(features_path, "r", encoding="utf-8") as f:
+    model = joblib.load(base / "xgb_model.pkl")
+    with open(base / "features.json", "r", encoding="utf-8") as f:
         features = json.load(f)
+    return model, features
 
-    # 1) 기본: joblib 로딩
-    try:
-        model = joblib.load(model_path)
-        return model, features, "sklearn"
-    except Exception as e_joblib:
-        # 2) pickle fallback
-        try:
-            with open(model_path, "rb") as f:
-                model = pickle.load(f)
-            return model, features, "sklearn"
-        except Exception:
-            # 3) xgboost json fallback
-            try:
-                import xgboost as xgb
-                if model_json_path.exists():
-                    booster = xgb.Booster()
-                    booster.load_model(str(model_json_path))
-                    return booster, features, "booster"
-            except Exception:
-                pass
-            raise RuntimeError(
-                "모델 로드 실패: xgb_model.pkl 언피클 실패. "
-                "구글드라이브 파일 손상/링크 권한 또는 Python/XGBoost 버전 불일치 가능성이 큽니다. "
-                f"(joblib 에러: {e_joblib})"
-            )
-
-try:
-    model, features, model_kind = load_model()
-except Exception as e:
-    st.error(str(e))
-    st.info(
-        "해결 방법: 1) 해당 파일 공유권한(링크 사용자 보기) 확인 2) Secrets의 repair 링크 재확인 "
-        "3) 가능하면 xgb_model.json도 함께 업로드해 fallback 사용"
-    )
-    st.stop()
+model, features = load_model()
 rental_daily, BR = load_raw_data()
 
 # ══════════════════════════════════════════════
@@ -341,12 +284,7 @@ if data_filtered.empty:
     st.stop()
 
 X = data_filtered.reindex(columns=features, fill_value=0)
-if model_kind == "booster":
-    import xgboost as xgb
-    pred = model.predict(xgb.DMatrix(X))
-    data_filtered["고장확률"] = np.asarray(pred, dtype=float)
-else:
-    data_filtered["고장확률"] = model.predict_proba(X)[:, 1]
+data_filtered["고장확률"]     = model.predict_proba(X)[:, 1]
 data_filtered["고장확률_pct"] = (data_filtered["고장확률"] * 100).round(1)
 
 def 권고사항(p):
