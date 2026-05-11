@@ -11,5 +11,8 @@ node_modules/
 
 # data
 raw_data/
+processed_data/
 *.csv
 *.json
+
+.streamlit/
